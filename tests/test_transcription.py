@@ -376,8 +376,9 @@ class TestSpeechAccumulator:
         acc.add(seg2)  # triggers flush
 
         # Check what audio was actually passed to model.transcribe
+        # 4.0s of speech + 0.2s zero-padding added by _flush_internal
         called_audio = asr._model.transcribe.call_args[0][0]
-        expected_samples = int(4.0 * SAMPLE_RATE)
+        expected_samples = int(4.0 * SAMPLE_RATE) + int(0.2 * SAMPLE_RATE)
         assert len(called_audio) == expected_samples
 
     def test_timestamp_from_first_segment(self):

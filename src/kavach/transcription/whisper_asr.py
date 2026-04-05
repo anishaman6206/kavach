@@ -323,7 +323,10 @@ class SpeechAccumulator:
         if not self._segments:
             return None
 
-        combined_audio = np.concatenate([seg.audio for seg in self._segments])
+        combined_audio = np.concatenate(
+            [seg.audio for seg in self._segments]
+            + [np.zeros(int(0.2 * _WHISPER_SAMPLE_RATE), dtype=np.float32)]
+        )
         first = self._segments[0]
         last = self._segments[-1]
 
