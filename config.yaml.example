@@ -1,0 +1,66 @@
+# kavach/configs/config.yaml.example
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is gitignored — never commit real API keys.
+
+# ── API keys ──────────────────────────────────────
+api_keys:
+  gemini: "YOUR_GEMINI_API_KEY_HERE"       # get from aistudio.google.com
+  youtube: "YOUR_YOUTUBE_API_KEY_HERE"     # get from console.developers.google.com
+
+# ── Audio settings ────────────────────────────────
+audio:
+  sample_rate: 16000          # Hz — Whisper expects 16kHz
+  chunk_duration_s: 2.5       # seconds per processing chunk
+  overlap_s: 0.5              # overlap between chunks
+  channels: 1                 # mono
+
+# ── VAD settings ──────────────────────────────────
+vad:
+  threshold: 0.5              # Silero VAD sensitivity (0–1)
+  min_speech_duration_ms: 250 # ignore speech bursts shorter than this
+  min_silence_duration_ms: 300 # gap needed to mark speaker turn
+
+# ── ASR settings ──────────────────────────────────
+asr:
+  model: "tiny"               # whisper model: tiny | base | small
+  language: null              # null = auto-detect per chunk
+  device: "cpu"               # cpu | cuda | mps
+
+# ── Rolling buffer ────────────────────────────────
+buffer:
+  max_utterances: 10          # how many utterances to keep
+  max_tokens: 600             # approximate token cap for SLM context
+
+# ── Heuristic detector ────────────────────────────
+heuristics:
+  tier1_score_boost: 0.15     # score added when Tier 1 detected
+  tier3_score_boost: 0.20     # score added when Tier 3 detected
+  combined_boost: 0.45        # score when both Tier 1 + Tier 3 in same window
+
+# ── MuRIL classifier ──────────────────────────────
+classifier:
+  model_name: "google/muril-base-cased"
+  model_path: "models/muril_finetuned"   # local fine-tuned weights
+  max_length: 256
+  safe_threshold: 0.35        # below this → safe, skip SLM
+  suspicious_threshold: 0.65  # above this → suspicious, escalate to SLM
+
+# ── SLM settings ──────────────────────────────────
+slm:
+  mode: "api"                 # api | local
+  api_model: "gemini-1.5-flash"
+  local_model_path: "models/llama-3.2-3b-instruct-q4"
+  max_output_tokens: 300
+
+# ── Risk fusion ───────────────────────────────────
+fusion:
+  weight_heuristic: 0.20
+  weight_classifier: 0.30
+  weight_slm: 0.50
+  temporal_decay: 0.85        # older utterances weighted by this factor
+
+# ── Alert thresholds ──────────────────────────────
+alerts:
+  caution: 0.35               # amber — silent in-app warning
+  alert: 0.65                 # red — banner + haptic
+  critical: 0.85              # full screen + disconnect option

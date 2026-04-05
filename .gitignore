@@ -1,0 +1,71 @@
+# ── Python ──────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ── Virtual environments ─────────────────────────
+venv/
+env/
+.venv/
+ENV/
+
+# ── Model weights (too large for git) ───────────
+models/*.bin
+models/*.pt
+models/*.pth
+models/*.gguf
+models/*.ggml
+models/*.safetensors
+models/*.onnx
+!models/.gitkeep
+
+# ── Audio data (never commit real call audio) ────
+data/raw/*.wav
+data/raw/*.mp3
+data/raw/*.m4a
+data/raw/*.ogg
+data/raw/*.flac
+!data/raw/.gitkeep
+
+data/samples/*.wav
+data/samples/*.mp3
+!data/samples/.gitkeep
+
+# ── Dataset files (large CSVs / JSONL) ──────────
+*.csv
+*.jsonl
+*.parquet
+!data/**/.gitkeep
+
+# ── API keys and secrets ─────────────────────────
+.env
+.env.local
+configs/config.yaml
+!configs/config.yaml.example
+
+# ── Jupyter notebooks (keep but strip outputs) ───
+.ipynb_checkpoints/
+
+# ── IDE and OS ───────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs and outputs ─────────────────────────────
+logs/
+*.log
+results/
+runs/
+wandb/
+
+# ── HuggingFace cache ────────────────────────────
+.cache/

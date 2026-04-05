@@ -1,0 +1,45 @@
+# ── Core ML / NLP ────────────────────────────────
+torch>=2.1.0
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.27.0
+peft>=0.10.0                   # LoRA fine-tuning for SLM
+
+# ── Audio processing ─────────────────────────────
+numpy>=1.24.0
+scipy>=1.11.0
+soundfile>=0.12.1
+librosa>=0.10.1
+pyaudio>=0.2.14                # microphone/call audio capture
+
+# ── VAD ──────────────────────────────────────────
+silero-vad>=4.0.0
+
+# ── ASR ──────────────────────────────────────────
+openai-whisper>=20231117       # Python Whisper (fallback / training)
+# whisper.cpp bindings installed separately — see docs/setup.md
+
+# ── Classifier (MuRIL) ───────────────────────────
+sentencepiece>=0.1.99          # required by MuRIL tokenizer
+protobuf>=3.20.0
+
+# ── SLM — demo mode (Gemini Flash API) ──────────
+google-generativeai>=0.5.0
+python-dotenv>=1.0.0
+
+# ── Data & evaluation ────────────────────────────
+pandas>=2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ── YouTube data collection ──────────────────────
+youtube-transcript-api>=0.6.2
+google-api-python-client>=2.100.0
+isodate>=0.6.1
+
+# ── Utilities ────────────────────────────────────
+tqdm>=4.66.0
+pyyaml>=6.0.1
+loguru>=0.7.2                  # clean logging
+pytest>=7.4.0                  # unit tests
