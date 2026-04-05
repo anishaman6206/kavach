@@ -1,23 +1,24 @@
 """
 scripts/test_with_audio.py
 ===========================
-Test Kavach's audio layer (VAD + Buffer) with a real audio file.
+Test Kavach's audio + transcription pipeline with a real audio file.
 
 This script simulates what happens during a live call:
   - Loads your MP3/WAV scam recording
   - Treats the entire audio as CALLER channel
     (single-channel recording = one person or mixed, but scam-labeled)
   - Chunks it into 2.5s windows exactly as the live pipeline does
-  - Runs VAD on each chunk
-  - Fills the rolling buffer
-  - Prints what the buffer looks like after every chunk
+  - Runs VAD on each chunk to strip silence
+  - Runs Whisper on each speech segment for real transcription
+  - Fills the rolling buffer with real Utterances (not placeholders)
+  - Prints what the buffer looks like after processing
 
 Usage:
     cd kavach
     python scripts/test_with_audio.py --audio data/samples/scam_call.mp3
 
 Requirements:
-    pip install librosa soundfile numpy
+    pip install librosa soundfile numpy openai-whisper
     (librosa handles MP3 via audioread/ffmpeg)
 """
 
@@ -27,6 +28,10 @@ import os
 
 # Allow running from repo root without installing the package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+# Force UTF-8 output on Windows so Hindi/Tamil/etc. characters print correctly
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import numpy as np
 
@@ -56,15 +61,20 @@ def load_audio(path: str, target_sr: int = 16_000) -> np.ndarray:
         sys.exit(1)
 
 
-def run_test(audio_path: str, chunk_duration_s: float = 2.5) -> None:
-    from kavach.audio.buffer import ConversationBuffer, Speaker, Utterance
+def run_test(
+    audio_path: str,
+    chunk_duration_s: float = 2.5,
+    whisper_model: str = "tiny",
+) -> None:
+    from kavach.audio.buffer import ConversationBuffer
     from kavach.audio.vad    import VoiceActivityDetector
+    from kavach.transcription.whisper_asr import WhisperASR
 
     SAMPLE_RATE = 16_000
     chunk_samples = int(chunk_duration_s * SAMPLE_RATE)
 
     print("\n" + "="*55)
-    print("  KAVACH — Audio Layer Test")
+    print("  KAVACH — Audio + Transcription Pipeline Test")
     print("="*55)
 
     # ── Load audio ────────────────────────────────────────────
@@ -74,10 +84,13 @@ def run_test(audio_path: str, chunk_duration_s: float = 2.5) -> None:
     n_chunks = (len(audio) + chunk_samples - 1) // chunk_samples
     print(f"  Chunks to process: {n_chunks} × {chunk_duration_s}s")
 
-    # ── Init VAD and buffer ───────────────────────────────────
+    # ── Init VAD, ASR, and buffer ─────────────────────────────
     print(f"\n[2] Initialising VAD...")
     vad = VoiceActivityDetector(threshold=0.5)
     buf = ConversationBuffer(max_utterances=10)
+
+    print(f"\n[2b] Loading Whisper '{whisper_model}' model...")
+    asr = WhisperASR(model_name=whisper_model, device="cpu")
 
     # ── Process each chunk ────────────────────────────────────
     print(f"\n[3] Processing chunks...\n")
@@ -121,22 +134,18 @@ def run_test(audio_path: str, chunk_duration_s: float = 2.5) -> None:
         print(f"  Chunk {chunk_idx+1:02d} [{chunk_start_time:.1f}s]: "
               f"{len(segments)} speech segment(s)")
 
-        # ── Add detected speech to buffer ─────────────────────
-        # In the real pipeline, Whisper transcribes each segment here.
-        # For this test, we use placeholder text to verify buffer mechanics.
+        # ── Transcribe each speech segment with Whisper ───────
         for seg_idx, seg in enumerate(segments):
-            placeholder_text = (
-                f"[transcription pending — "
-                f"seg {seg_idx+1} of chunk {chunk_idx+1}, "
-                f"dur={seg.duration:.2f}s]"
-            )
-            utterance = Utterance(
-                speaker     = seg.speaker,
-                text        = placeholder_text,
-                timestamp   = seg.start_time,
-                chunk_index = seg.chunk_index,
-            )
+            utterance = asr.transcribe(seg)
+            if utterance is None:
+                print(f"    seg {seg_idx+1}: [skipped — empty/noise]")
+                continue
             buf.add(utterance)
+            preview = utterance.text[:80]
+            if len(utterance.text) > 80:
+                preview += "..."
+            print(f"    seg {seg_idx+1} [{seg.speaker.value}|{utterance.language}]: "
+                  f"{preview}")
 
     # ── Final buffer state ────────────────────────────────────
     print(f"\n{'='*55}")
@@ -172,8 +181,8 @@ def run_test(audio_path: str, chunk_duration_s: float = 2.5) -> None:
         print("  Try: python scripts/test_with_audio.py "
               "--audio your_file.mp3 --threshold 0.3")
     else:
-        print("  Audio layer is working correctly.")
-        print("  Next step: connect Whisper to transcribe each segment.")
+        print("  Audio + transcription pipeline is working correctly.")
+        print("  Next step: build detection/heuristics.py (Tier signal detector).")
     print(f"{'='*55}\n")
 
 
@@ -198,10 +207,20 @@ if __name__ == "__main__":
         default=0.5,
         help="VAD threshold 0-1 (default: 0.5, lower = more sensitive)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="tiny",
+        help="Whisper model size: tiny, base, small, medium, large (default: tiny)",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.audio):
         print(f"[ERROR] File not found: {args.audio}")
         sys.exit(1)
 
-    run_test(audio_path=args.audio, chunk_duration_s=args.chunk)
+    run_test(
+        audio_path=args.audio,
+        chunk_duration_s=args.chunk,
+        whisper_model=args.model,
+    )
