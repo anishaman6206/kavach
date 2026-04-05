@@ -64,11 +64,12 @@ def load_audio(path: str, target_sr: int = 16_000) -> np.ndarray:
 def run_test(
     audio_path: str,
     chunk_duration_s: float = 2.5,
-    whisper_model: str = "tiny",
+    whisper_model: str = "small",
+    min_accumulation_s: float = 4.0,
 ) -> None:
     from kavach.audio.buffer import ConversationBuffer
     from kavach.audio.vad    import VoiceActivityDetector
-    from kavach.transcription.whisper_asr import WhisperASR
+    from kavach.transcription.whisper_asr import WhisperASR, SpeechAccumulator
 
     SAMPLE_RATE = 16_000
     chunk_samples = int(chunk_duration_s * SAMPLE_RATE)
@@ -92,8 +93,15 @@ def run_test(
     print(f"\n[2b] Loading Whisper '{whisper_model}' model...")
     asr = WhisperASR(model_name=whisper_model, device="cpu")
 
+    print(f"\n[2c] Detecting call language from first 30s...")
+    detected_lang = asr.detect_language_once(audio)
+    print(f"  Language locked to: '{detected_lang}'")
+
+    acc = SpeechAccumulator(asr, min_duration_s=min_accumulation_s)
+    total_utterances = 0
+
     # ── Process each chunk ────────────────────────────────────
-    print(f"\n[3] Processing chunks...\n")
+    print(f"\n[3] Processing chunks (accumulating ≥{min_accumulation_s}s before Whisper)...\n")
     total_speech_segments = 0
     silent_chunks = 0
 
@@ -126,35 +134,38 @@ def run_test(
 
         if not segments:
             silent_chunks += 1
-            print(f"  Chunk {chunk_idx+1:02d} [{chunk_start_time:.1f}s]: "
-                  f"[silent — VAD filtered]")
             continue
 
         total_speech_segments += len(segments)
-        print(f"  Chunk {chunk_idx+1:02d} [{chunk_start_time:.1f}s]: "
-              f"{len(segments)} speech segment(s)")
 
-        # ── Transcribe each speech segment with Whisper ───────
-        for seg_idx, seg in enumerate(segments):
-            utterance = asr.transcribe(seg)
-            if utterance is None:
-                print(f"    seg {seg_idx+1}: [skipped — empty/noise]")
-                continue
-            buf.add(utterance)
-            preview = utterance.text[:80]
-            if len(utterance.text) > 80:
-                preview += "..."
-            print(f"    seg {seg_idx+1} [{seg.speaker.value}|{utterance.language}]: "
-                  f"{preview}")
+        # ── Feed segments to accumulator ──────────────────────
+        for seg in segments:
+            utterance = acc.add(seg)
+            if utterance is not None:
+                buf.add(utterance)
+                total_utterances += 1
+                preview = utterance.text[:90]
+                if len(utterance.text) > 90:
+                    preview += "..."
+                print(f"  [{utterance.timestamp:6.1f}s] {utterance.speaker.value}|{utterance.language}: {preview}")
+
+    # ── Flush remaining buffered audio ────────────────────────
+    utterance = acc.flush()
+    if utterance is not None:
+        buf.add(utterance)
+        total_utterances += 1
+        print(f"  [{utterance.timestamp:6.1f}s] {utterance.speaker.value}|{utterance.language}: {utterance.text[:90]} [final flush]")
 
     # ── Final buffer state ────────────────────────────────────
     print(f"\n{'='*55}")
     print(f"  Results")
     print(f"{'='*55}")
     print(f"  Total duration:         {total_duration:.1f}s")
+    print(f"  Language locked:        {detected_lang}")
     print(f"  Chunks processed:       {n_chunks}")
     print(f"  Silent chunks (VAD):    {silent_chunks}")
     print(f"  Speech segments found:  {total_speech_segments}")
+    print(f"  Utterances transcribed: {total_utterances}")
     print(f"  Buffer size (last 10):  {buf.size} utterances")
 
     print(f"\n── Final rolling buffer state ──")
@@ -210,8 +221,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="tiny",
-        help="Whisper model size: tiny, base, small, medium, large (default: tiny)",
+        default="small",
+        help="Whisper model size: tiny, base, small, medium, large (default: small)",
+    )
+    parser.add_argument(
+        "--accumulate",
+        type=float,
+        default=4.0,
+        help="Minimum seconds of speech to accumulate before Whisper call (default: 4.0)",
     )
     args = parser.parse_args()
 
@@ -223,4 +240,5 @@ if __name__ == "__main__":
         audio_path=args.audio,
         chunk_duration_s=args.chunk,
         whisper_model=args.model,
+        min_accumulation_s=args.accumulate,
     )

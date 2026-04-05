@@ -22,8 +22,9 @@ vad:
 
 # ── ASR settings ──────────────────────────────────
 asr:
-  model: "tiny"               # whisper model: tiny | base | small
-  language: null              # null = auto-detect per chunk
+  model: "small"              # tiny|base|small|medium — small recommended for Hindi
+  language: null              # null = detect once, then lock. Or force "hi", "en" etc.
+  min_accumulation_s: 4.0     # minimum seconds of speech before sending to Whisper
   device: "cpu"               # cpu | cuda | mps
 
 # ── Rolling buffer ────────────────────────────────

@@ -176,12 +176,21 @@ class TestWhisperASROutput:
         result = asr.transcribe(seg)
         assert result.language == "hi"
 
-    def test_language_defaults_to_en_if_missing(self):
-        """Robustness: Whisper result missing 'language' key → default 'en'."""
+    def test_language_fallback_when_key_missing(self):
+        """Robustness: Whisper result missing 'language' key → falls back to
+        self.language if set, otherwise 'hi' (safe default for this project)."""
+        # Case 1: no language locked — falls back to 'hi'
         asr = make_asr_with_mock({"text": "some text"})   # no 'language' key
+        asr.language = None
         seg = make_segment()
         result = asr.transcribe(seg)
-        assert result.language == "en"
+        assert result.language == "hi"
+
+        # Case 2: language locked to 'en' — uses that
+        asr2 = make_asr_with_mock({"text": "some text"})
+        asr2.language = "en"
+        result2 = asr2.transcribe(seg)
+        assert result2.language == "en"
 
     def test_timestamp_from_segment(self):
         asr = make_asr_with_mock({"text": "hello", "language": "en"})
@@ -244,3 +253,151 @@ class TestWhisperASRRepr:
     def test_repr_shows_loaded_true(self):
         asr = make_asr_with_mock({"text": "hi", "language": "en"})
         assert "loaded=True" in repr(asr)
+
+
+class TestDetectLanguageOnce:
+    """Tests for WhisperASR.detect_language_once()."""
+
+    def test_locks_language_from_result(self):
+        """detect_language_once() should cache and return the detected language."""
+        import sys
+        import unittest.mock as um
+
+        asr = make_asr_with_mock({"text": "hi", "language": "en"})
+        asr.language = None  # not yet locked
+
+        audio = (0.05 * np.ones(16000 * 5)).astype(np.float32)
+
+        # Patch 'whisper' in sys.modules so the `import whisper` inside the
+        # method finds our mock. This avoids AttributeError from module-level patching.
+        mock_whisper_module = MagicMock()
+        mock_whisper_module.pad_or_trim.return_value = audio[:480000].astype(np.float32)
+        mock_whisper_module.log_mel_spectrogram.return_value = MagicMock()
+        asr._model.detect_language.return_value = (None, {"hi": 0.9, "en": 0.05})
+
+        with um.patch.dict(sys.modules, {"whisper": mock_whisper_module}):
+            lang = asr.detect_language_once(audio)
+
+        assert lang == "hi"
+        assert asr.language == "hi"
+
+    def test_does_not_overwrite_if_already_set(self):
+        """If self.language is already set, detect_language_once() is a no-op."""
+        asr = make_asr_with_mock({"text": "hi", "language": "en"})
+        asr.language = "en"  # already locked
+        lang = asr.detect_language_once(np.zeros(16000, dtype=np.float32))
+        assert lang == "en"
+        assert asr.language == "en"
+        # detect_language should NOT have been called
+        asr._model.detect_language.assert_not_called()
+
+    def test_locked_language_used_in_transcribe(self):
+        """After detect_language_once(), transcribe() uses the locked language."""
+        asr = make_asr_with_mock({"text": "namaste", "language": "hi"})
+        asr.language = "hi"  # as if detect_language_once() already ran
+        seg = make_segment()
+        result = asr.transcribe(seg)
+        # Verify language param passed to model.transcribe was "hi"
+        call_kwargs = asr._model.transcribe.call_args
+        assert call_kwargs.kwargs.get("language") == "hi"
+
+
+class TestSpeechAccumulator:
+    """Tests for SpeechAccumulator."""
+
+    def _make_asr(self, text: str = "hello from sbi", lang: str = "hi") -> WhisperASR:
+        return make_asr_with_mock({"text": text, "language": lang})
+
+    def test_returns_none_below_threshold(self):
+        """Segments below min_duration_s should not trigger transcription."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+        # 1s segment — well below 4s threshold
+        seg = make_segment(duration_s=1.0)
+        result = acc.add(seg)
+        assert result is None
+        asr._model.transcribe.assert_not_called()
+
+    def test_flushes_when_threshold_reached(self):
+        """Adding enough segments to reach 4s should trigger transcription."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+
+        results = []
+        # 4 × 1s segments = exactly 4s
+        for _ in range(4):
+            r = acc.add(make_segment(duration_s=1.0))
+            results.append(r)
+
+        # Only the last add should have returned an Utterance
+        assert results[-1] is not None
+        assert isinstance(results[-1], Utterance)
+        assert all(r is None for r in results[:-1])
+
+    def test_flush_returns_remaining(self):
+        """flush() should transcribe buffered audio even if < min_duration_s."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+        acc.add(make_segment(duration_s=1.0))  # below threshold
+        result = acc.flush()
+        assert result is not None
+        assert isinstance(result, Utterance)
+
+    def test_flush_empty_returns_none(self):
+        """flush() on an empty accumulator returns None."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+        assert acc.flush() is None
+
+    def test_speaker_change_flushes_and_restarts(self):
+        """When speaker changes, the old buffer is flushed immediately."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+
+        caller_seg = make_segment(duration_s=1.5, speaker=Speaker.CALLER)
+        user_seg   = make_segment(duration_s=0.5, speaker=Speaker.USER)
+
+        result_caller_add = acc.add(caller_seg)  # 1.5s CALLER — no flush yet
+        assert result_caller_add is None
+
+        # Adding USER segment triggers flush of buffered CALLER audio
+        result_on_switch = acc.add(user_seg)
+        assert result_on_switch is not None
+        assert result_on_switch.speaker == Speaker.CALLER
+
+    def test_accumulated_audio_is_concatenated(self):
+        """Verify combined segment audio length equals sum of inputs."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+
+        seg1 = make_segment(duration_s=2.0)
+        seg2 = make_segment(duration_s=2.0)
+        acc.add(seg1)
+        acc.add(seg2)  # triggers flush
+
+        # Check what audio was actually passed to model.transcribe
+        called_audio = asr._model.transcribe.call_args[0][0]
+        expected_samples = int(4.0 * SAMPLE_RATE)
+        assert len(called_audio) == expected_samples
+
+    def test_timestamp_from_first_segment(self):
+        """The Utterance timestamp should be from the first accumulated segment."""
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=2.0)
+
+        seg1 = make_segment(duration_s=1.0, start_time=10.0)
+        seg2 = make_segment(duration_s=1.0, start_time=11.0)
+        acc.add(seg1)
+        result = acc.add(seg2)
+        assert result is not None
+        assert result.timestamp == 10.0
+
+    def test_repr_shows_buffered_duration(self):
+        asr = self._make_asr()
+        acc = SpeechAccumulator(asr, min_duration_s=4.0)
+        acc.add(make_segment(duration_s=1.0))
+        assert "buffered=1.00s" in repr(acc)
+
+
+# Need to import SpeechAccumulator for the tests above
+from kavach.transcription.whisper_asr import SpeechAccumulator
