@@ -24,7 +24,7 @@ sentencepiece>=0.1.99          # required by MuRIL tokenizer
 protobuf>=3.20.0
 
 # ── SLM — demo mode (Gemini Flash API) ──────────
-google-generativeai>=0.5.0
+google-genai>=1.0.0            # new SDK (replaces deprecated google-generativeai)
 python-dotenv>=1.0.0
 
 # ── Data & evaluation ────────────────────────────
@@ -43,3 +43,6 @@ tqdm>=4.66.0
 pyyaml>=6.0.1
 loguru>=0.7.2                  # clean logging
 pytest>=7.4.0                  # unit tests
+
+
+librosa

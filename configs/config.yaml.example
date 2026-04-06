@@ -26,6 +26,7 @@ asr:
   language: null              # null = detect once, then lock. Or force "hi", "en" etc.
   min_accumulation_s: 4.0     # minimum seconds of speech before sending to Whisper
   device: "cpu"               # cpu | cuda | mps
+  gemini_asr: true            # enable GeminiASR backend for offline comparison (set false when offline)
 
 # ── Rolling buffer ────────────────────────────────
 buffer:
