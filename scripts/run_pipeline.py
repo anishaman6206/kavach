@@ -157,6 +157,7 @@ def run_pipeline(
     duration_s: float | None = None,
     accumulate_s: float = 10.0,
     vad_threshold: float = 0.5,
+    ui: str = "none",
 ) -> None:
     from kavach.audio.buffer        import ConversationBuffer
     from kavach.audio.vad           import VoiceActivityDetector
@@ -168,29 +169,40 @@ def run_pipeline(
     cfg = load_config()
     api_key = cfg.get("api_keys", {}).get("gemini", "")
 
-    # ── Banner ────────────────────────────────────────────────────────────────
-    print("\n" + "=" * 65)
-    print("  KAVACH — End-to-End Scam Detection Pipeline")
-    print("=" * 65)
-    print(f"  Audio  : {audio_path}")
-    print(f"  Mode   : {mode.upper()} ASR")
-    if duration_s:
-        print(f"  Window : first {duration_s:.0f}s")
-    print(f"  Accum  : {accumulate_s}s per transcription call")
-    print()
+    # ── Terminal UI (optional) ────────────────────────────────────────────────
+    terminal_ui = None
+    if ui == "terminal":
+        from kavach.ui.terminal_ui import KavachTerminalUI
+        terminal_ui = KavachTerminalUI()
+
+    # ── Banner (plain mode only — terminal UI takes over the screen) ──────────
+    if terminal_ui is None:
+        print("\n" + "=" * 65)
+        print("  KAVACH — End-to-End Scam Detection Pipeline")
+        print("=" * 65)
+        print(f"  Audio  : {audio_path}")
+        print(f"  Mode   : {mode.upper()} ASR")
+        if duration_s:
+            print(f"  Window : first {duration_s:.0f}s")
+        print(f"  Accum  : {accumulate_s}s per transcription call")
+        print()
+
+    def _log(msg: str) -> None:
+        if terminal_ui is None:
+            print(msg)
 
     # ── Load audio ────────────────────────────────────────────────────────────
-    print("[1] Loading audio...")
+    _log("[1] Loading audio...")
     audio = load_audio(audio_path, duration_s)
     total_s = len(audio) / SAMPLE_RATE
     n_chunks = (len(audio) + CHUNK_SAMPLES - 1) // CHUNK_SAMPLES
-    print(f"    {total_s:.1f}s loaded ({n_chunks} chunks × {CHUNK_S}s)\n")
+    _log(f"    {total_s:.1f}s loaded ({n_chunks} chunks × {CHUNK_S}s)\n")
 
     # ── Init modules ─────────────────────────────────────────────────────────
-    print("[2] Initialising modules...")
+    _log("[2] Initialising modules...")
 
     vad = VoiceActivityDetector(threshold=vad_threshold)
-    print(f"    VAD           : Silero (threshold={vad_threshold})")
+    _log(f"    VAD           : Silero (threshold={vad_threshold})")
 
     buf = ConversationBuffer(max_utterances=10)
 
@@ -200,40 +212,45 @@ def run_pipeline(
             sys.exit(1)
         from kavach.transcription.gemini_asr import GeminiASR
         asr = GeminiASR(api_key=api_key)
-        print(f"    ASR           : GeminiASR (gemini-2.5-flash)")
-        print(f"    Lang detect   : detecting from first 30s...")
+        _log(f"    ASR           : GeminiASR (gemini-2.5-flash)")
+        _log(f"    Lang detect   : detecting from first 30s...")
         asr.detect_language_once(audio)
-        print(f"    Language      : {asr.language}")
+        _log(f"    Language      : {asr.language}")
         accumulator = _GeminiAccumulator(asr, min_duration_s=accumulate_s)
     else:
         from kavach.transcription.whisper_asr import WhisperASR, SpeechAccumulator
         asr = WhisperASR(model_name="small", device="cpu")
-        print(f"    ASR           : WhisperASR (small)")
-        print(f"    Lang detect   : detecting from first 30s...")
+        _log(f"    ASR           : WhisperASR (small)")
+        _log(f"    Lang detect   : detecting from first 30s...")
         asr.detect_language_once(audio)
-        print(f"    Language      : {asr.language}")
+        _log(f"    Language      : {asr.language}")
         accumulator = SpeechAccumulator(asr, min_duration_s=accumulate_s)
 
     heuristics  = HeuristicDetector()
-    print(f"    Heuristics    : HeuristicDetector (regex tier detector)")
+    _log(f"    Heuristics    : HeuristicDetector (regex tier detector)")
 
     clf = MuRILClassifier(threshold=0.35)
-    print(f"    Classifier    : MuRIL (zero-shot, threshold=0.35)")
+    _log(f"    Classifier    : MuRIL (zero-shot, threshold=0.35)")
 
     if api_key:
         slm = GeminiSLM(api_key=api_key)
-        print(f"    SLM           : GeminiSLM (gemini-2.5-flash)")
+        _log(f"    SLM           : GeminiSLM (gemini-2.5-flash)")
     else:
         slm = None
-        print(f"    SLM           : DISABLED (no API key)")
+        _log(f"    SLM           : DISABLED (no API key)")
 
     scorer = RiskScorer(cfg)
-    print(f"    RiskScorer    : weights h=0.20 c=0.30 s=0.50, decay=0.90")
+    _log(f"    RiskScorer    : weights h=0.20 c=0.30 s=0.50, decay=0.90")
 
-    # ── Timeline header ───────────────────────────────────────────────────────
-    print(f"\n{'─'*65}")
-    print(f"  {'TIME':>5}  {'LEVEL':^9}  {'SCORE':^6}  TIERS  EXPLANATION")
-    print(f"{'─'*65}")
+    # ── Timeline header (plain mode only) ────────────────────────────────────
+    if terminal_ui is None:
+        print(f"\n{'─'*65}")
+        print(f"  {'TIME':>5}  {'LEVEL':^9}  {'SCORE':^6}  TIERS  EXPLANATION")
+        print(f"{'─'*65}")
+
+    # ── Start UI after all modules are loaded ─────────────────────────────────
+    if terminal_ui is not None:
+        terminal_ui.start()
 
     # ── Processing loop ───────────────────────────────────────────────────────
     pipeline_start = time.perf_counter()
@@ -280,22 +297,28 @@ def run_pipeline(
                 total_slm_calls += 1
 
             risk = scorer.update(h_result, c_result, slm_result)
+            elapsed_so_far = time.perf_counter() - pipeline_start
 
             if highest_result is None or risk.final_score > highest_result.final_score:
                 highest_result = risk
 
-            # Print row only when level changes or on first utterance
-            level_changed = risk.alert_level != prev_level
-            if level_changed or total_utterances == 1:
-                tiers_str = "+".join(str(t) for t in risk.tiers_seen_this_call) or "—"
-                expl = risk.explanation[:42] + "…" if len(risk.explanation) > 42 else risk.explanation
-                print(
-                    f"  {utt.timestamp:>5.0f}s  "
-                    f"{_fmt_level(risk.alert_level)}  "
-                    f"{risk.final_score:>5.3f}  "
-                    f"[{tiers_str:^5}]  {expl}"
-                )
-                prev_level = risk.alert_level
+            if terminal_ui is not None:
+                terminal_ui.update(risk, buf, elapsed_s=utt.timestamp)
+                if risk.alert_level in ("ALERT", "CRITICAL"):
+                    terminal_ui.show_alert(risk)
+            else:
+                # Plain mode: print row only when level changes or on first utterance
+                level_changed = risk.alert_level != prev_level
+                if level_changed or total_utterances == 1:
+                    tiers_str = "+".join(str(t) for t in risk.tiers_seen_this_call) or "—"
+                    expl = risk.explanation[:42] + "…" if len(risk.explanation) > 42 else risk.explanation
+                    print(
+                        f"  {utt.timestamp:>5.0f}s  "
+                        f"{_fmt_level(risk.alert_level)}  "
+                        f"{risk.final_score:>5.3f}  "
+                        f"[{tiers_str:^5}]  {expl}"
+                    )
+                    prev_level = risk.alert_level
 
     # Flush accumulator tail
     utt = accumulator.flush()
@@ -311,7 +334,9 @@ def run_pipeline(
         risk = scorer.update(h_result, c_result, slm_result)
         if highest_result is None or risk.final_score > highest_result.final_score:
             highest_result = risk
-        if risk.alert_level != prev_level:
+        if terminal_ui is not None:
+            terminal_ui.update(risk, buf, elapsed_s=utt.timestamp)
+        elif risk.alert_level != prev_level:
             tiers_str = "+".join(str(t) for t in risk.tiers_seen_this_call) or "—"
             expl = risk.explanation[:42] + "…" if len(risk.explanation) > 42 else risk.explanation
             print(
@@ -323,21 +348,24 @@ def run_pipeline(
 
     elapsed = time.perf_counter() - pipeline_start
 
-    # ── Final summary ─────────────────────────────────────────────────────────
-    print(f"{'─'*65}")
-    print(f"\n  ── FINAL SUMMARY ──────────────────────────────────────────")
-    if highest_result:
-        print(f"  Verdict         : {highest_result.alert_level}")
-        print(f"  Highest score   : {highest_result.final_score:.3f}")
-        print(f"  Tiers seen      : {highest_result.tiers_seen_this_call or '(none)'}")
-        print(f"  Explanation     : {highest_result.explanation}")
+    # ── Stop UI / print final summary ─────────────────────────────────────────
+    if terminal_ui is not None:
+        terminal_ui.stop()
     else:
-        print("  Verdict         : SAFE (no speech detected)")
-    print(f"  Audio duration  : {total_s:.1f}s")
-    print(f"  Utterances      : {total_utterances}")
-    print(f"  SLM calls       : {total_slm_calls}")
-    print(f"  Pipeline time   : {elapsed:.1f}s")
-    print(f"  {'='*57}")
+        print(f"{'─'*65}")
+        print(f"\n  ── FINAL SUMMARY ──────────────────────────────────────────")
+        if highest_result:
+            print(f"  Verdict         : {highest_result.alert_level}")
+            print(f"  Highest score   : {highest_result.final_score:.3f}")
+            print(f"  Tiers seen      : {highest_result.tiers_seen_this_call or '(none)'}")
+            print(f"  Explanation     : {highest_result.explanation}")
+        else:
+            print("  Verdict         : SAFE (no speech detected)")
+        print(f"  Audio duration  : {total_s:.1f}s")
+        print(f"  Utterances      : {total_utterances}")
+        print(f"  SLM calls       : {total_slm_calls}")
+        print(f"  Pipeline time   : {elapsed:.1f}s")
+        print(f"  {'='*57}")
     scorer.reset()
 
 
@@ -375,6 +403,9 @@ if __name__ == "__main__":
                         help="Seconds of speech to accumulate before transcribing (default 10)")
     parser.add_argument("--vad-threshold", type=float, default=0.5,
                         help="Silero VAD threshold 0–1 (default 0.5)")
+    parser.add_argument("--ui",            default="terminal",
+                        choices=["terminal", "none"],
+                        help="UI mode: terminal (rich live dashboard) | none (plain print, default for CI)")
     args = parser.parse_args(clean_args)
 
     if not os.path.exists(args.audio):
@@ -387,4 +418,5 @@ if __name__ == "__main__":
         duration_s=first_n_s,
         accumulate_s=args.accumulate,
         vad_threshold=args.vad_threshold,
+        ui=args.ui,
     )
