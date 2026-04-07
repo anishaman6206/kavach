@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KAVACH — Real-Time Scam Detection</title>
+<style>
+/* ── Reset & base ──────────────────────────────────────────────────────────── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0f172a;
+  color: #f1f5f9;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+#header {
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 48px;
+}
+#header h1 {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #f1f5f9;
+  text-transform: uppercase;
+}
+#header-status {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+/* ── Three-column layout ───────────────────────────────────────────────────── */
+#main {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  height: calc(100vh - 48px);
+}
+
+.col-left   { width: 30%; display: flex; flex-direction: column; gap: 10px; }
+.col-center { width: 40%; display: flex; flex-direction: column; gap: 10px; }
+.col-right  { width: 30%; display: flex; flex-direction: column; gap: 10px; }
+
+/* ── Card ──────────────────────────────────────────────────────────────────── */
+.card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid #1e3a5f22;
+}
+
+.section-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 10px;
+}
+
+/* ── Risk score ────────────────────────────────────────────────────────────── */
+#score-number {
+  font-size: 52px;
+  font-weight: 800;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.4s ease;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+
+.risk-bar-bg {
+  background: #334155;
+  border-radius: 6px;
+  height: 14px;
+  overflow: hidden;
+}
+#risk-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  width: 0%;
+  transition: width 0.6s cubic-bezier(.4,0,.2,1), background-color 0.4s ease;
+  background: #22c55e;
+}
+
+#alert-badge {
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  padding: 6px 0;
+  border-radius: 6px;
+  margin-top: 10px;
+  transition: background 0.4s, color 0.4s;
+}
+
+/* ── Tier pills ────────────────────────────────────────────────────────────── */
+.tier-pills {
+  display: flex;
+  gap: 8px;
+}
+.tier-pill {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: #0f172a;
+  color: #475569;
+  border: 1px solid #334155;
+  transition: background 0.4s, color 0.4s, border-color 0.4s;
+  cursor: default;
+}
+.tier-pill .tier-sub {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+.tier-pill.active {
+  background: #052e16;
+  color: #22c55e;
+  border-color: #166534;
+}
+
+/* ── Component score bars ──────────────────────────────────────────────────── */
+.component-row { margin-bottom: 10px; }
+.component-row:last-child { margin-bottom: 0; }
+.comp-label-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.comp-label-row .comp-name { font-weight: 500; }
+.comp-label-row .comp-val  { font-weight: 600; font-variant-numeric: tabular-nums; }
+.comp-bar-bg {
+  background: #0f172a;
+  border-radius: 3px;
+  height: 5px;
+  overflow: hidden;
+}
+.comp-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.6s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Conversation feed ─────────────────────────────────────────────────────── */
+#conv-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#conv-feed {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.bubble-wrap-caller { display: flex; justify-content: flex-start; }
+.bubble-wrap-user   { display: flex; justify-content: flex-end; }
+
+.bubble {
+  max-width: 88%;
+  padding: 7px 11px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.bubble-caller {
+  background: #431407;
+  color: #fed7aa;
+  border-radius: 12px 12px 12px 3px;
+}
+.bubble-user {
+  background: #0c2340;
+  color: #bfdbfe;
+  border-radius: 12px 12px 3px 12px;
+}
+.bubble-meta {
+  font-size: 10px;
+  opacity: 0.65;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+
+#status-bar {
+  text-align: center;
+  color: #475569;
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+/* ── SLM explanation ───────────────────────────────────────────────────────── */
+#explanation-text {
+  font-style: italic;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.6;
+  min-height: 52px;
+}
+
+/* ── Timeline ──────────────────────────────────────────────────────────────── */
+#timeline-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#timeline-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tl-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10.5px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+}
+.tl-time  { color: #475569; width: 30px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.tl-level { font-weight: 700; width: 60px; flex-shrink: 0; font-size: 10px; letter-spacing: 0.04em; }
+.tl-score { color: #94a3b8; width: 34px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.tl-tiers { color: #64748b; width: 44px; flex-shrink: 0; }
+.tl-expl  {
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* ── Alert level color tokens ──────────────────────────────────────────────── */
+.c-safe     { color: #22c55e; }
+.c-caution  { color: #f59e0b; }
+.c-alert    { color: #ef4444; }
+.c-critical { color: #f87171; }
+
+.bg-safe     { background: #052e16; color: #22c55e; }
+.bg-caution  { background: #451a03; color: #f59e0b; }
+.bg-alert    { background: #450a0a; color: #ef4444; }
+.bg-critical { background: #3b0000; color: #f87171; animation: pulse 0.9s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div id="header">
+  <h1>&#9889; KAVACH &mdash; Real-Time Scam Detection</h1>
+  <span id="header-status" class="c-caution">Connecting&hellip;</span>
+</div>
+
+<!-- ── Three-column main layout ────────────────────────────────────────────── -->
+<div id="main">
+
+  <!-- ── Left column: score + tiers + signals ────────────────────────────── -->
+  <div class="col-left">
+
+    <div class="card">
+      <div class="section-title">Risk Score</div>
+      <div id="score-number" class="c-safe">0.00</div>
+      <div class="risk-bar-bg"><div id="risk-bar-fill"></div></div>
+      <div id="alert-badge" class="bg-safe">SAFE</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Manipulation Funnel Tiers</div>
+      <div class="tier-pills">
+        <div class="tier-pill" id="tier-1">
+          Tier 1<span class="tier-sub">Authority</span>
+        </div>
+        <div class="tier-pill" id="tier-2">
+          Tier 2<span class="tier-sub">Urgency</span>
+        </div>
+        <div class="tier-pill" id="tier-3">
+          Tier 3<span class="tier-sub">Extract</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Detection Signals</div>
+
+      <div class="component-row">
+        <div class="comp-label-row">
+          <span class="comp-name">Heuristics</span>
+          <span class="comp-val" id="h-val">0.00</span>
+        </div>
+        <div class="comp-bar-bg">
+          <div class="comp-bar-fill" id="h-bar" style="background:#38bdf8"></div>
+        </div>
+      </div>
+
+      <div class="component-row">
+        <div class="comp-label-row">
+          <span class="comp-name">MuRIL Classifier</span>
+          <span class="comp-val" id="c-val">0.00</span>
+        </div>
+        <div class="comp-bar-bg">
+          <div class="comp-bar-fill" id="c-bar" style="background:#a78bfa"></div>
+        </div>
+      </div>
+
+      <div class="component-row">
+        <div class="comp-label-row">
+          <span class="comp-name">Gemini SLM</span>
+          <span class="comp-val" id="s-val">0.00</span>
+        </div>
+        <div class="comp-bar-bg">
+          <div class="comp-bar-fill" id="s-bar" style="background:#fb923c"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col-left -->
+
+  <!-- ── Center column: conversation feed ────────────────────────────────── -->
+  <div class="col-center">
+    <div id="conv-card" class="card">
+      <div class="section-title">Live Conversation</div>
+      <div id="conv-feed"></div>
+    </div>
+    <div id="status-bar">Waiting for analysis&hellip;</div>
+  </div>
+
+  <!-- ── Right column: explanation + timeline ────────────────────────────── -->
+  <div class="col-right">
+
+    <div class="card">
+      <div class="section-title">SLM Reasoning</div>
+      <div id="explanation-text">No signals detected yet.</div>
+    </div>
+
+    <div id="timeline-card" class="card">
+      <div class="section-title">Decision Timeline</div>
+      <div id="timeline-list"></div>
+    </div>
+
+  </div><!-- /col-right -->
+
+</div><!-- /#main -->
+
+<script>
+/* ── Color maps ──────────────────────────────────────────────────────────── */
+const BAR_COLOR  = { SAFE: '#22c55e', CAUTION: '#f59e0b', ALERT: '#ef4444', CRITICAL: '#f87171' };
+const CSS_CLASS  = { SAFE: 'c-safe',  CAUTION: 'c-caution', ALERT: 'c-alert', CRITICAL: 'c-critical' };
+const BG_CLASS   = { SAFE: 'bg-safe', CAUTION: 'bg-caution', ALERT: 'bg-alert', CRITICAL: 'bg-critical' };
+
+/* ── State ───────────────────────────────────────────────────────────────── */
+const seenUtterances = new Set();   // deduplicate by "speaker|ts|prefix"
+
+/* ── Helpers ─────────────────────────────────────────────────────────────── */
+function colorClass(level) { return CSS_CLASS[level] || 'c-safe'; }
+function bgClass(level)    { return BG_CLASS[level]  || 'bg-safe'; }
+function barColor(level)   { return BAR_COLOR[level] || '#22c55e'; }
+
+function setClass(el, classes, target) {
+  classes.forEach(c => el.classList.remove(c));
+  el.classList.add(target);
+}
+
+/* ── Dashboard update ────────────────────────────────────────────────────── */
+function updateDashboard(d) {
+  const { timestamp, alert_level, final_score, tiers_detected,
+          explanation, component_scores, utterances } = d;
+
+  /* Score number */
+  const scoreEl = document.getElementById('score-number');
+  scoreEl.textContent = final_score.toFixed(2);
+  setClass(scoreEl, ['c-safe','c-caution','c-alert','c-critical'], colorClass(alert_level));
+
+  /* Risk bar */
+  const fill = document.getElementById('risk-bar-fill');
+  fill.style.width           = (final_score * 100).toFixed(1) + '%';
+  fill.style.backgroundColor = barColor(alert_level);
+
+  /* Alert badge */
+  const badge = document.getElementById('alert-badge');
+  badge.textContent = alert_level;
+  setClass(badge, ['bg-safe','bg-caution','bg-alert','bg-critical'], bgClass(alert_level));
+
+  /* Header status */
+  const hdr = document.getElementById('header-status');
+  hdr.textContent = alert_level + '  \u2022  ' + final_score.toFixed(3);
+  setClass(hdr, ['c-safe','c-caution','c-alert','c-critical'], colorClass(alert_level));
+
+  /* Tier pills */
+  [1, 2, 3].forEach(t => {
+    const pill = document.getElementById('tier-' + t);
+    if (tiers_detected && tiers_detected.includes(t)) {
+      pill.classList.add('active');
+    }
+  });
+
+  /* Component scores */
+  if (component_scores) {
+    const vals = [
+      ['h', component_scores.heuristic || 0],
+      ['c', component_scores.classifier || 0],
+      ['s', component_scores.slm        || 0],
+    ];
+    vals.forEach(([key, val]) => {
+      document.getElementById(key + '-val').textContent = val.toFixed(2);
+      document.getElementById(key + '-bar').style.width = (val * 100).toFixed(1) + '%';
+    });
+  }
+
+  /* Explanation */
+  if (explanation) {
+    document.getElementById('explanation-text').textContent = explanation;
+  }
+
+  /* Conversation feed — only append new utterances */
+  if (utterances && utterances.length) {
+    const feed = document.getElementById('conv-feed');
+    utterances.forEach(utt => {
+      const key = utt.speaker + '|' + utt.timestamp.toFixed(1) + '|' + utt.text.slice(0, 18);
+      if (seenUtterances.has(key)) return;
+      seenUtterances.add(key);
+
+      const isCaller  = utt.speaker === 'CALLER';
+      const wrapDiv   = document.createElement('div');
+      wrapDiv.className = isCaller ? 'bubble-wrap-caller' : 'bubble-wrap-user';
+
+      const bubble = document.createElement('div');
+      bubble.className = isCaller ? 'bubble bubble-caller' : 'bubble bubble-user';
+
+      const meta = document.createElement('div');
+      meta.className   = 'bubble-meta';
+      meta.textContent = utt.speaker + ' \u00b7 ' + utt.timestamp.toFixed(1) + 's';
+
+      const txt = document.createElement('div');
+      txt.textContent  = utt.text.length > 90 ? utt.text.slice(0, 90) + '\u2026' : utt.text;
+
+      bubble.appendChild(meta);
+      bubble.appendChild(txt);
+      wrapDiv.appendChild(bubble);
+      feed.appendChild(wrapDiv);
+      feed.scrollTop = feed.scrollHeight;
+    });
+  }
+
+  /* Timeline row */
+  const tierStr = tiers_detected && tiers_detected.length
+    ? '[' + tiers_detected.join(',') + ']'
+    : '[\u2014]';
+  const expl = explanation
+    ? (explanation.length > 48 ? explanation.slice(0, 48) + '\u2026' : explanation)
+    : '';
+
+  const row = document.createElement('div');
+  row.className = 'tl-row';
+  row.innerHTML =
+    '<span class="tl-time">'  + Math.round(timestamp) + 's</span>' +
+    '<span class="tl-level ' + colorClass(alert_level) + '">' + alert_level + '</span>' +
+    '<span class="tl-score">' + final_score.toFixed(2) + '</span>' +
+    '<span class="tl-tiers">' + tierStr + '</span>' +
+    '<span class="tl-expl">'  + expl    + '</span>';
+
+  const tl = document.getElementById('timeline-list');
+  tl.appendChild(row);
+  tl.scrollTop = tl.scrollHeight;
+
+  /* Status bar */
+  document.getElementById('status-bar').textContent =
+    'Analysing\u2026  ' + Math.round(timestamp) + 's  \u00b7  '
+    + (tiers_detected ? tiers_detected.length : 0) + ' tier(s) detected';
+}
+
+/* ── WebSocket ───────────────────────────────────────────────────────────── */
+let ws;
+
+function connect() {
+  ws = new WebSocket('ws://localhost:8000/ws');
+
+  ws.onopen = function () {
+    const hdr = document.getElementById('header-status');
+    hdr.textContent = 'Connected \u2014 waiting for analysis\u2026';
+    hdr.className   = 'c-safe';
+    document.getElementById('status-bar').textContent = 'Connected. Starting analysis\u2026';
+  };
+
+  ws.onclose = function () {
+    const hdr = document.getElementById('header-status');
+    hdr.textContent = 'Reconnecting\u2026';
+    hdr.className   = 'c-caution';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = function () {
+    const hdr = document.getElementById('header-status');
+    hdr.textContent = 'Connection error';
+    hdr.className   = 'c-alert';
+  };
+
+  ws.onmessage = function (evt) {
+    let data;
+    try { data = JSON.parse(evt.data); } catch (e) { return; }
+
+    if (data.type === 'done') {
+      document.getElementById('status-bar').textContent = 'Processing complete.';
+      document.getElementById('header-status').textContent = 'Analysis complete';
+      return;
+    }
+    if (data.type === 'error') {
+      document.getElementById('status-bar').textContent = 'Error: ' + data.message;
+      document.getElementById('header-status').textContent = 'Pipeline error';
+      document.getElementById('header-status').className = 'c-alert';
+      return;
+    }
+
+    updateDashboard(data);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
