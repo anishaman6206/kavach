@@ -278,35 +278,58 @@ _LANG_PRIORITY = {
     "kn": ["kn", "en"],
 }
 
+# Singleton API instance — youtube-transcript-api v1.x uses instance-based API
+_yt_api_instance = None
+
+
+def _get_yt_api():
+    global _yt_api_instance
+    if _yt_api_instance is None:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        _yt_api_instance = YouTubeTranscriptApi()
+    return _yt_api_instance
+
+
+def _snippets_to_text_and_segs(fetched) -> tuple[str, list]:
+    """Convert FetchedTranscript (v1.x) to (full_text, segments_list)."""
+    snippets = fetched.snippets
+    text = " ".join(s.text for s in snippets)
+    segs = [{"text": s.text, "start": s.start, "duration": s.duration}
+            for s in snippets]
+    return text, segs
+
 
 def fetch_transcript_api(video_id: str, target_lang: str) -> tuple[str | None, list | None, str | None]:
     """
-    Try YouTubeTranscriptApi for the video.
+    Try YouTubeTranscriptApi (v1.x instance API) for the video.
     Returns (text, segments, detected_lang) or (None, None, None).
+
+    v1.x change: class-level get_transcript/list_transcripts removed.
+    Now uses api.fetch() and api.list() on an instance.
+    fetch() returns FetchedTranscript with .snippets (not a list of dicts).
     """
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-
+        api        = _get_yt_api()
         lang_order = _LANG_PRIORITY.get(target_lang, ["en"])
 
-        # Try each preferred language
+        # Try each preferred language directly
         for lang in lang_order:
             try:
-                segs = YouTubeTranscriptApi.get_transcript(video_id, languages=[lang])
-                text = " ".join(s["text"] for s in segs)
+                fetched = api.fetch(video_id, languages=[lang])
+                text, segs = _snippets_to_text_and_segs(fetched)
                 return text, segs, lang
             except Exception:
                 continue
 
-        # Last resort: any available transcript
+        # Last resort: inspect all available transcripts
         try:
-            tlist = YouTubeTranscriptApi.list_transcripts(video_id)
+            tlist = api.list(video_id)
             try:
                 t = tlist.find_manually_created_transcript(lang_order)
             except Exception:
                 t = tlist.find_generated_transcript(lang_order)
-            segs = t.fetch()
-            text = " ".join(s["text"] for s in segs)
+            fetched = t.fetch()
+            text, segs = _snippets_to_text_and_segs(fetched)
             return text, segs, t.language_code
         except Exception:
             return None, None, None
