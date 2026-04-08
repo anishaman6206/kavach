@@ -200,7 +200,7 @@ def _run_pipeline(
             accumulator = _GeminiAccumulator(asr, min_duration_s=accumulate_s)
         else:
             from kavach.transcription.whisper_asr import WhisperASR, SpeechAccumulator
-            asr = WhisperASR(model_name="small", device="cpu")
+            asr = WhisperASR(model_name="small", device="cuda")
             asr.detect_language_once(audio)
             accumulator = SpeechAccumulator(asr, min_duration_s=accumulate_s)
 

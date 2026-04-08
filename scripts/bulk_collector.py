@@ -410,7 +410,8 @@ def fetch_transcript_gemini(
 
     try:
         from kavach.transcription.gemini_asr import GeminiASR
-        asr  = GeminiASR(api_key=gemini_api_key)
+        # Use 1.5-flash for bulk collection: 1,500 req/day free tier vs 20 for 2.5-flash
+        asr  = GeminiASR(api_key=gemini_api_key, model_name="gemini-1.5-flash")
         text = asr.transcribe_raw(audio)
         if not text or not text.strip():
             return None, "error:gemini returned empty transcript"

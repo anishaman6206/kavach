@@ -195,7 +195,7 @@ class WhisperASR:
             result = self._model.transcribe(
                 audio,
                 language=self.language,   # locked after detect_language_once()
-                fp16=False,               # fp16 off for CPU compatibility
+                fp16=(self.device == "cuda"),  # enable fp16 on GPU for performance
                 verbose=False,
             )
         except Exception as e:
