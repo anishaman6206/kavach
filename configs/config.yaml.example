@@ -49,10 +49,11 @@ classifier:
 
 # ── SLM settings ──────────────────────────────────
 slm:
-  mode: "api"                 # api | local
-  api_model: "gemini-1.5-flash"
-  local_model_path: "models/llama-3.2-3b-instruct-q4"
-  max_output_tokens: 300
+  mode: "gemini"              # "gemini" | "ollama"
+  gemini_model: "gemini-2.5-flash"
+  ollama_model: "llama3.2:3b"
+  ollama_host: "http://localhost:11434"
+  temperature: 0.1
 
 # ── Risk fusion ───────────────────────────────────
 fusion:

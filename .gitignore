@@ -15,6 +15,12 @@ env/
 .venv/
 ENV/
 
+# Claude Code
+CLAUDE.md
+**/CLAUDE.md
+.claude/
+.mcp.json
+
 # ── Model weights (too large for git) ───────────
 models/*.bin
 models/*.pt

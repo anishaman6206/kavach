@@ -1,10 +1,14 @@
 """
 kavach.detection.slm
 ======================
-Gemini Flash context reasoning layer — the final, authoritative verdict.
+SLM reasoning layer — the final, authoritative scam verdict.
+
+Two backends are available:
+  - GeminiSLM    : Gemini Flash API (demo/eval — audio-free, but cloud)
+  - OllamaLlamaSLM : Llama 3.2 3B via local Ollama server (fully on-device)
 
 Pipeline position:
-    heuristics → MuRILClassifier (gate) → [GeminiSLM] → risk_scorer
+    heuristics → MuRILClassifier (gate) → [GeminiSLM | OllamaLlamaSLM] → risk_scorer
 
 This is the ONLY layer that understands intent. It solves the false-positive
 problem that pure heuristics and classifiers cannot:
@@ -12,23 +16,30 @@ problem that pure heuristics and classifiers cannot:
   "bro share OTP for Netflix"   → Tier 3 present, but NO Tier 1 → LEGITIMATE
   "RBI officer, share OTP now"  → Tier 1 + Tier 3 in CALLER speech → SCAM
 
-The Manipulation Funnel system prompt is embedded here as a permanent
-guardrail. It cannot be overridden at runtime.
+The Manipulation Funnel system prompt is embedded here as a module-level
+constant shared by both classes. It cannot be overridden at runtime.
 
 Design decisions:
   - temperature=0.1 for highly consistent structured JSON output.
   - heuristic_score and classifier_score are passed as "prior signals" in
-    the user prompt — Gemini uses them as soft hints, not hard rules.
+    the user prompt — the model uses them as soft hints, not hard rules.
   - JSON is parsed strictly. Any malformed response returns UNCERTAIN/LOW
     rather than crashing the pipeline.
-  - API errors (network, rate limit, quota) return UNCERTAIN so the
-    pipeline degrades gracefully — it never halts a live call.
-  - Uses google-genai (new SDK), same as GeminiASR.
+  - API/connection errors return UNCERTAIN so the pipeline degrades
+    gracefully — it never halts a live call.
+  - GeminiSLM uses google-genai (new SDK), same as GeminiASR.
+  - OllamaLlamaSLM uses the ollama Python client; requires `ollama serve`.
 
 Usage:
-    from kavach.detection.slm import GeminiSLM
+    from kavach.detection.slm import GeminiSLM, OllamaLlamaSLM, check_ollama_running
 
+    # Gemini (cloud)
     slm = GeminiSLM(api_key="AIza...")
+
+    # Ollama (on-device)
+    if check_ollama_running():
+        slm = OllamaLlamaSLM(model="llama3.2:3b")
+
     result = slm.analyze(
         slm_context=buf.as_slm_context(),
         heuristic_score=0.40,
@@ -41,6 +52,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -320,4 +332,129 @@ class GeminiSLM:
             f"GeminiSLM(model={self.model!r}, "
             f"temperature={self.temperature}, "
             f"connected={self._client is not None})"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ollama utility
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_ollama_running(host: str = "http://localhost:11434") -> bool:
+    """Returns True if the Ollama server is reachable."""
+    try:
+        import httpx
+        r = httpx.get(f"{host}/api/tags", timeout=2.0)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OllamaLlamaSLM
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OllamaLlamaSLM:
+    """
+    On-device SLM via Ollama — same verdict interface as GeminiSLM.
+
+    Runs Llama 3.2 3B (or any Ollama-compatible model) locally.
+    Requires Ollama to be running: `ollama serve`
+    Pull the model first: `ollama pull llama3.2:3b`
+
+    Shares _SYSTEM_PROMPT with GeminiSLM — same Manipulation Funnel
+    guardrail, same JSON schema, same SLMResult output.
+
+    Args:
+        model       : Ollama model tag. Default: 'llama3.2:3b'.
+        host        : Ollama server URL. Default: 'http://localhost:11434'.
+        temperature : Sampling temperature. Default: 0.1.
+    """
+
+    def __init__(
+        self,
+        model: str = "llama3.2:3b",
+        host: str = "http://localhost:11434",
+        temperature: float = 0.1,
+    ) -> None:
+        self.model = model
+        self.host = host
+        self.temperature = temperature
+        logger.info(f"[SLM] OllamaLlamaSLM initialised (model: {self.model}, host: {self.host}).")
+
+    def analyze(
+        self,
+        slm_context: str,
+        heuristic_score: float = 0.0,
+        classifier_score: float = 0.5,
+    ) -> SLMResult:
+        """
+        Analyze a conversation and return a structured scam verdict.
+
+        Args:
+            slm_context      : output of buf.as_slm_context().
+            heuristic_score  : float 0–0.5 from HeuristicDetector (soft hint).
+            classifier_score : float 0–1 from MuRILClassifier (soft hint).
+
+        Returns:
+            SLMResult. Returns UNCERTAIN/LOW on connection error or malformed
+            JSON — the pipeline never crashes on SLM failure.
+        """
+        t0 = time.perf_counter()
+        user_prompt = (
+            f"Prior signals: heuristic_score={heuristic_score:.2f}, "
+            f"classifier_score={classifier_score:.2f}\n\n"
+            f"Conversation:\n{slm_context}\n\n"
+            f"Respond with JSON only."
+        )
+
+        try:
+            import ollama
+
+            response = ollama.Client(host=self.host).chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                options={
+                    "temperature": self.temperature,
+                    "num_predict": 300,
+                },
+            )
+            raw_text = response.message.content or ""
+
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            # Distinguish connection errors (Ollama not running) from other errors
+            err_str = str(e)
+            if "connection" in err_str.lower() or "refused" in err_str.lower() or "connect" in err_str.lower():
+                logger.warning(
+                    f"[SLM] Ollama not reachable at {self.host}. "
+                    f"Start it with: ollama serve\n"
+                    f"  Then: ollama pull {self.model}"
+                )
+                return _uncertain(elapsed_ms, "Ollama not running — connection refused.")
+            logger.warning(f"[SLM] Ollama call failed: {e}")
+            return _uncertain(elapsed_ms, f"Ollama error: {type(e).__name__}")
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        # Strip markdown fences (Llama sometimes wraps output)
+        text = raw_text.strip()
+        text = re.sub(r"^```json\s*", "", text)
+        text = re.sub(r"^```\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+        result = _parse_response(text, elapsed_ms)
+        logger.info(
+            f"[SLM] Ollama {result.verdict} ({result.confidence}) "
+            f"tiers={result.tiers_detected} {elapsed_ms:.0f}ms"
+        )
+        return result
+
+    def __repr__(self) -> str:
+        return (
+            f"OllamaLlamaSLM(model={self.model!r}, "
+            f"host={self.host!r}, "
+            f"temperature={self.temperature})"
         )

@@ -28,7 +28,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from kavach.detection.slm import GeminiSLM, SLMResult, _parse_response, _uncertain
+from kavach.detection.slm import (
+    GeminiSLM, OllamaLlamaSLM, SLMResult,
+    _parse_response, _uncertain, check_ollama_running,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,3 +279,97 @@ def test_invalid_verdict_returns_uncertain():
 
     assert result.verdict == "UNCERTAIN"
     assert result.p_scam == pytest.approx(0.5)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OllamaLlamaSLM tests (fully mocked — no real Ollama calls)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_ollama_slm(response_text: str) -> tuple[OllamaLlamaSLM, MagicMock]:
+    """
+    Return (OllamaLlamaSLM, mock_chat).
+    Mocks ollama.Client so no real server is contacted.
+    """
+    mock_message = MagicMock()
+    mock_message.content = response_text
+
+    mock_response = MagicMock()
+    mock_response.message = mock_message
+
+    mock_client_instance = MagicMock()
+    mock_client_instance.chat.return_value = mock_response
+
+    with patch("ollama.Client", return_value=mock_client_instance):
+        slm = OllamaLlamaSLM(model="llama3.2:3b")
+
+    # Patch Client at call time too
+    slm._mock_client = mock_client_instance
+    return slm, mock_client_instance.chat
+
+
+# 13. OllamaLlamaSLM sends correct system + user message roles
+def test_ollama_correct_message_format():
+    slm, mock_chat = _make_ollama_slm(_scam_json())
+
+    with patch("ollama.Client", return_value=slm._mock_client):
+        result = slm.analyze(SAMPLE_CONTEXT, heuristic_score=0.40, classifier_score=0.50)
+
+    assert mock_chat.called
+    messages = mock_chat.call_args.kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "0.40" in messages[1]["content"]
+    assert "0.50" in messages[1]["content"]
+
+
+# 14. OllamaLlamaSLM strips markdown JSON fences correctly
+def test_ollama_strips_markdown_fences():
+    fenced = "```json\n" + _scam_json() + "\n```"
+    slm, _ = _make_ollama_slm(fenced)
+
+    with patch("ollama.Client", return_value=slm._mock_client):
+        result = slm.analyze(SAMPLE_CONTEXT)
+
+    assert result.verdict == "SCAM"
+    assert result.p_scam == pytest.approx(1.0)
+
+
+# 15. OllamaLlamaSLM returns UNCERTAIN when Ollama connection is refused
+def test_ollama_connection_refused_returns_uncertain():
+    slm = OllamaLlamaSLM(model="llama3.2:3b")
+
+    connection_err = ConnectionRefusedError("Connection refused")
+    with patch("ollama.Client") as mock_cls:
+        mock_cls.return_value.chat.side_effect = connection_err
+        result = slm.analyze(SAMPLE_CONTEXT)
+
+    assert result.verdict == "UNCERTAIN"
+    assert result.confidence == "LOW"
+    assert result.p_scam == pytest.approx(0.5)
+
+
+# 16. check_ollama_running() returns False when server is down
+def test_check_ollama_running_false_when_down():
+    with patch("httpx.get", side_effect=Exception("Connection refused")):
+        assert check_ollama_running("http://localhost:11434") is False
+
+
+# 17. OllamaLlamaSLM and GeminiSLM return identical SLMResult schema
+def test_ollama_and_gemini_return_same_schema():
+    gemini_slm, _ = _make_slm(_scam_json())
+    gemini_result = gemini_slm.analyze(SAMPLE_CONTEXT)
+
+    ollama_slm, _ = _make_ollama_slm(_scam_json())
+    with patch("ollama.Client", return_value=ollama_slm._mock_client):
+        ollama_result = ollama_slm.analyze(SAMPLE_CONTEXT)
+
+    # Both must return an SLMResult with identical fields
+    for attr in ("verdict", "tiers_detected", "confidence", "reason", "p_scam"):
+        assert hasattr(gemini_result, attr)
+        assert hasattr(ollama_result, attr)
+        assert getattr(gemini_result, attr) == getattr(ollama_result, attr), (
+            f"Field {attr!r} differs: {getattr(gemini_result, attr)!r} vs "
+            f"{getattr(ollama_result, attr)!r}"
+        )
+    assert gemini_result.inference_ms >= 0.0
+    assert ollama_result.inference_ms >= 0.0

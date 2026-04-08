@@ -22,6 +22,7 @@ Usage:
 Flags:
     --audio       : path to audio file (MP3, WAV, M4A, …)
     --mode        : "gemini" (default) | "whisper" — ASR backend
+    --slm-mode    : "gemini" (default) | "ollama" — SLM backend
     --first-Ns    : process only first N seconds (e.g. --first-60s)
     --accumulate  : seconds of speech to accumulate before transcribing (default 10)
     --vad-threshold: Silero VAD sensitivity 0–1 (default 0.5)
@@ -154,6 +155,7 @@ class _GeminiAccumulator:
 def run_pipeline(
     audio_path: str,
     mode: str = "gemini",
+    slm_mode: str = "gemini",
     duration_s: float | None = None,
     accumulate_s: float = 10.0,
     vad_threshold: float = 0.5,
@@ -163,7 +165,7 @@ def run_pipeline(
     from kavach.audio.vad           import VoiceActivityDetector
     from kavach.detection.heuristics import HeuristicDetector
     from kavach.detection.classifier import MuRILClassifier
-    from kavach.detection.slm        import GeminiSLM
+    from kavach.detection.slm        import GeminiSLM, OllamaLlamaSLM, check_ollama_running
     from kavach.fusion.risk_scorer   import RiskScorer
 
     cfg = load_config()
@@ -232,7 +234,20 @@ def run_pipeline(
     clf = MuRILClassifier(threshold=0.35)
     _log(f"    Classifier    : MuRIL (zero-shot, threshold=0.35)")
 
-    if api_key:
+    if slm_mode == "ollama":
+        ollama_cfg = cfg.get("slm", {})
+        ollama_host  = ollama_cfg.get("ollama_host", "http://localhost:11434")
+        ollama_model = ollama_cfg.get("ollama_model", "llama3.2:3b")
+        if not check_ollama_running(ollama_host):
+            print(
+                f"\n[ERROR] Ollama is not running at {ollama_host}.\n"
+                f"  Start it with:  ollama serve\n"
+                f"  Then pull:      ollama pull {ollama_model}\n"
+            )
+            sys.exit(1)
+        slm = OllamaLlamaSLM(model=ollama_model, host=ollama_host)
+        _log(f"    SLM           : OllamaLlamaSLM ({ollama_model} @ {ollama_host})")
+    elif api_key:
         slm = GeminiSLM(api_key=api_key)
         _log(f"    SLM           : GeminiSLM (gemini-2.5-flash)")
     else:
@@ -399,6 +414,9 @@ if __name__ == "__main__":
     parser.add_argument("--mode",          default="gemini",
                         choices=["gemini", "whisper"],
                         help="ASR backend: gemini (default) | whisper")
+    parser.add_argument("--slm-mode",      default="gemini",
+                        choices=["gemini", "ollama"],
+                        help="SLM backend: gemini (default) | ollama")
     parser.add_argument("--accumulate",    type=float, default=10.0,
                         help="Seconds of speech to accumulate before transcribing (default 10)")
     parser.add_argument("--vad-threshold", type=float, default=0.5,
@@ -415,6 +433,7 @@ if __name__ == "__main__":
     run_pipeline(
         audio_path=args.audio,
         mode=args.mode,
+        slm_mode=args.slm_mode,
         duration_s=first_n_s,
         accumulate_s=args.accumulate,
         vad_threshold=args.vad_threshold,
