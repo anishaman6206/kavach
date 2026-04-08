@@ -167,6 +167,7 @@ def _run_pipeline(
     first_n_seconds: Optional[float],
     mode: str,
     accumulate_s: float,
+    slm_mode: str = "ollama",
 ) -> None:
     """
     Background thread — loads audio, runs the full Kavach pipeline,
@@ -178,7 +179,6 @@ def _run_pipeline(
         from kavach.audio.vad            import VoiceActivityDetector
         from kavach.detection.heuristics import HeuristicDetector
         from kavach.detection.classifier import MuRILClassifier
-        from kavach.detection.slm        import GeminiSLM
         from kavach.fusion.risk_scorer   import RiskScorer
 
         cfg     = _load_config()
@@ -206,7 +206,16 @@ def _run_pipeline(
 
         heuristics = HeuristicDetector()
         clf        = MuRILClassifier(threshold=0.35)
-        slm        = GeminiSLM(api_key=api_key) if api_key else None
+
+        # ── Initialize SLM based on slm_mode ───────────────────────────────────
+        slm = None
+        if slm_mode == "gemini" and api_key:
+            from kavach.detection.slm import GeminiSLM
+            slm = GeminiSLM(api_key=api_key)
+        elif slm_mode == "ollama":
+            from kavach.detection.slm import OllamaLlamaSLM
+            slm = OllamaLlamaSLM(host=cfg.get("slm", {}).get("ollama_host", "http://localhost:11434"))
+
         scorer     = RiskScorer(cfg)
 
         # ── Processing loop ───────────────────────────────────────────────────
@@ -320,6 +329,7 @@ class AnalyzeRequest(BaseModel):
     audio_path:      str
     first_n_seconds: Optional[float] = None
     mode:            str             = "gemini"
+    slm_mode:        str             = "ollama"
     accumulate_s:    float           = 10.0
 
 
@@ -339,6 +349,7 @@ async def analyze(request: AnalyzeRequest) -> dict:
             request.first_n_seconds,
             request.mode,
             request.accumulate_s,
+            request.slm_mode,
         ),
         daemon  = True,
         name    = "kavach-pipeline",

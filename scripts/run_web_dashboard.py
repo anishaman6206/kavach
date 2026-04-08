@@ -5,7 +5,7 @@ One-command launcher for the Kavach web dashboard.
 
 Usage:
     python scripts/run_web_dashboard.py --audio data/samples/scam_call.mp3 --first-60s
-    python scripts/run_web_dashboard.py --audio data/samples/scam_call.mp3 --mode whisper
+    python scripts/run_web_dashboard.py --audio data/samples/scam_call.mp3 --mode whisper --slm-mode ollama
 
 What it does:
   1. Starts a FastAPI/uvicorn server (background thread) on port 8000
@@ -15,7 +15,8 @@ What it does:
 
 Flags:
     --audio       : path to audio file (MP3, WAV, …)          [required]
-    --mode        : "gemini" (default) | "whisper"
+    --mode        : "gemini" (default) | "whisper"            [ASR backend]
+    --slm-mode    : "ollama" (default) | "gemini"             [SLM backend]
     --first-Ns    : process only first N seconds  (e.g. --first-60s)
     --accumulate  : seconds of speech per ASR call (default 10)
     --port        : server port (default 8000)
@@ -68,6 +69,7 @@ def _trigger_analyze(
     audio_path: str,
     first_n_seconds,
     mode: str,
+    slm_mode: str,
     accumulate_s: float,
 ) -> None:
     """POST /analyze to kick off the pipeline."""
@@ -78,6 +80,7 @@ def _trigger_analyze(
         "audio_path":      audio_path,
         "first_n_seconds": first_n_seconds,
         "mode":            mode,
+        "slm_mode":        slm_mode,
         "accumulate_s":    accumulate_s,
     }).encode()
 
@@ -107,6 +110,9 @@ def main() -> None:
     parser.add_argument("--mode",       default="gemini",
                         choices=["gemini", "whisper"],
                         help="ASR backend (default: gemini)")
+    parser.add_argument("--slm-mode",   default="ollama",
+                        choices=["ollama", "gemini"],
+                        help="SLM backend (default: ollama)")
     parser.add_argument("--accumulate", type=float, default=10.0,
                         help="Seconds of speech per transcription call (default 10)")
     parser.add_argument("--port",       type=int, default=8000,
@@ -161,7 +167,7 @@ def main() -> None:
     print(f"[kavach] Sending audio to pipeline: {audio_path}")
     if first_n_s:
         print(f"[kavach] Processing first {first_n_s:.0f}s of audio")
-    _trigger_analyze(args.port, audio_path, first_n_s, args.mode, args.accumulate)
+    _trigger_analyze(args.port, audio_path, first_n_s, args.mode, args.slm_mode, args.accumulate)
 
     # ── Keep server alive until Ctrl+C ────────────────────────────────────────
     print("[kavach] Dashboard running. Press Ctrl+C to stop.")
