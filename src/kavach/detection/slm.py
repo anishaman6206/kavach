@@ -91,7 +91,9 @@ VERDICT RULES:
   appointments, or send notifications — no credential extraction
 - UNCERTAIN: Insufficient context to decide
 
-Respond ONLY with valid JSON. No markdown, no explanation outside JSON.\
+Respond ONLY with valid JSON. No markdown, no explanation outside JSON.
+Return ONLY this exact JSON structure, no other keys:
+{"verdict": "SCAM", "tiers_detected": [1, 3], "confidence": "HIGH", "reason": "one sentence explanation"}\
 """
 
 _RESPONSE_SCHEMA = """\
@@ -193,12 +195,31 @@ def _parse_response(raw_text: str, inference_ms: float) -> SLMResult:
     if confidence not in _VALID_CONFIDENCE:
         confidence = "LOW"
 
+    # Normalize tiers_detected — Llama 3.2 sometimes returns strings like
+    # ["Tier 1", "Tier 3"] instead of integers [1, 3].
     raw_tiers = data.get("tiers_detected", [])
     if not isinstance(raw_tiers, list):
         raw_tiers = []
-    tiers = sorted({int(t) for t in raw_tiers if isinstance(t, (int, float)) and int(t) in (1, 2, 3)})
+    normalized_tiers = []
+    for t in raw_tiers:
+        if isinstance(t, (int, float)) and int(t) in (1, 2, 3):
+            normalized_tiers.append(int(t))
+        elif isinstance(t, str):
+            nums = re.findall(r"\d+", t)
+            if nums and int(nums[0]) in (1, 2, 3):
+                normalized_tiers.append(int(nums[0]))
+    tiers = sorted(set(normalized_tiers))
 
-    reason = str(data.get("reason", "No reason provided.")).strip()
+    # reason — primary key; fall back to "reasons" array (Llama 3.2 variant)
+    reason = str(data.get("reason", "")).strip()
+    if not reason:
+        reasons = data.get("reasons", [])
+        if isinstance(reasons, list) and reasons:
+            reason = " ".join(str(r) for r in reasons)
+        elif isinstance(reasons, str):
+            reason = reasons
+    if not reason:
+        reason = "No reason provided."
 
     return SLMResult(
         verdict=verdict,
